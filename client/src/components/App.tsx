@@ -1,15 +1,18 @@
 import { useEffect, useRef } from 'preact/hooks';
 import { handleGlobalKey } from '../actions';
 import { Logo } from '../icons';
-import { dialog, isMobile, leftOpen, me, menu, overlay, rightOpen } from '../store';
+import { dialog, isMobile, leftOpen, mainView, me, menu, overlay, rightOpen } from '../store';
 import { ls } from '../util';
 import { Auth } from './Auth';
 import { EditorPane } from './EditorPane';
+import { GraphView } from './Graph';
 import { Header, Tabs } from './Header';
 import { MoveDialog, Palette } from './Palette';
 import { RightPanel } from './RightPanel';
 import { SettingsModal, ShareModal } from './Settings';
 import { Sidebar } from './Sidebar';
+import { HistoryModal, ProfileView, ShareNodeModal } from './Social';
+import { TemplatesModal } from './Templates';
 import { DialogHost, MenuHost, Toasts } from './ui';
 
 function Shell() {
@@ -85,6 +88,8 @@ function Shell() {
         <Tabs />
         <Header />
         <EditorPane />
+        {mainView.value === 'graph' ? <GraphView /> : null}
+        {mainView.value === 'profile' ? <ProfileView /> : null}
       </main>
       <RightPanel />
       {mobile && (leftOpen.value || rightOpen.value) ? <div class="scrim" onClick={() => { leftOpen.value = false; rightOpen.value = false; }} /> : null}
@@ -92,6 +97,9 @@ function Shell() {
       {ov?.type === 'palette' ? <Palette key={ov.mode} mode={ov.mode} /> : null}
       {ov?.type === 'share' ? <ShareModal vaultId={ov.vaultId} /> : null}
       {ov?.type === 'move' ? <MoveDialog nodeId={ov.nodeId} /> : null}
+      {ov?.type === 'templates' ? <TemplatesModal /> : null}
+      {ov?.type === 'shareNode' ? <ShareNodeModal nodeId={ov.nodeId} /> : null}
+      {ov?.type === 'history' ? <HistoryModal nodeId={ov.nodeId} /> : null}
     </div>
   );
 }

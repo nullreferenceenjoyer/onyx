@@ -22,7 +22,7 @@ export interface Settings {
   customCss: string;
 }
 
-export interface User { id: string; login: string; displayName: string; settings: Partial<Settings> }
+export interface User { id: string; login: string; displayName: string; settings: Partial<Settings>; bio: string; profilePublic: boolean }
 export interface Vault { id: string; name: string; role: Role; ownerName: string; memberCount: number }
 export interface Member { id: string; login: string; displayName: string; role: Role }
 
@@ -52,3 +52,10 @@ export type MenuItem =
     onClick?: () => void;
     children?: MenuItem[];
   };
+
+export interface Share {
+  id: string; token: string; nodeId: string; vaultId: string; name: string; kind: 'folder' | 'file'; vaultName: string;
+  listed: boolean; expiresAt: string | null; views: number; createdAt: string; authorName: string; expired: boolean;
+  target: { login: string; displayName: string } | null;
+}
+export interface DayStat { day: string; count: number; notes: number }

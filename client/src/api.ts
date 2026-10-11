@@ -16,7 +16,7 @@ export async function api<T = any>(method: string, path: string, body?: unknown,
       method,
       credentials: 'same-origin',
       keepalive: opts.keepalive,
-      headers: { 'x-onyx': '1', 'x-client-id': clientId, ...(body !== undefined && !form ? { 'content-type': 'application/json' } : {}) },
+      headers: { 'x-onyx': '1', 'x-client-id': clientId, 'x-tz-offset': String(-new Date().getTimezoneOffset()), ...(body !== undefined && !form ? { 'content-type': 'application/json' } : {}) },
       body: form ? (body as FormData) : body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch {
@@ -30,4 +30,7 @@ export async function api<T = any>(method: string, path: string, body?: unknown,
   return data as T;
 }
 
-export const rawUrl = (id: string, version?: number) => `/api/nodes/${id}/raw${version ? `?v=${version}` : ''}`;
+// на публичной странице файлы отдаются по токену ссылки, а не по сессии
+let rawBase = (id: string) => `/api/nodes/${id}/raw`;
+export const setRawBase = (fn: (id: string) => string) => { rawBase = fn; };
+export const rawUrl = (id: string, version?: number) => `${rawBase(id)}${version ? `?v=${version}` : ''}`;

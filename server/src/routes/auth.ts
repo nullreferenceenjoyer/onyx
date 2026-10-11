@@ -7,7 +7,9 @@ import { WELCOME, WELCOME_NAME } from '../welcome.js';
 
 const LOGIN_RE = /^[a-z0-9а-яё._-]{3,32}$/;
 
-const userDto = (r: any) => ({ id: r.id, login: r.login, displayName: r.display_name, settings: r.settings ?? {} });
+const userDto = (r: any) => ({
+  id: r.id, login: r.login, displayName: r.display_name, settings: r.settings ?? {}, bio: r.bio ?? '', profilePublic: !!r.profile_public,
+});
 
 function credentials(body: any) {
   const login = String(body?.login ?? '').trim().toLowerCase();
@@ -78,6 +80,8 @@ export async function accountRoutes(app: FastifyInstance) {
       if (!name) throw bad('Имя не может быть пустым');
       await q('update users set display_name = $1 where id = $2', [name, req.user.id]);
     }
+    if (typeof body.bio === 'string') await q('update users set bio = $1 where id = $2', [body.bio.trim().slice(0, 300), req.user.id]);
+    if (typeof body.profilePublic === 'boolean') await q('update users set profile_public = $1 where id = $2', [body.profilePublic, req.user.id]);
     if (body.settings && typeof body.settings === 'object') {
       const json = JSON.stringify(body.settings);
       if (json.length > 200_000) throw bad('Слишком большие настройки');

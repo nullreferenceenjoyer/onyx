@@ -11,6 +11,8 @@ import { hub, type Client } from './hub.js';
 import { HttpError } from './http.js';
 import { accountRoutes, publicRoutes } from './routes/auth.js';
 import { nodeRoutes } from './routes/nodes.js';
+import { publicShareRoutes } from './routes/public.js';
+import { socialRoutes } from './routes/social.js';
 import { transferRoutes } from './routes/transfer.js';
 import { vaultRoutes } from './routes/vaults.js';
 
@@ -48,6 +50,7 @@ app.addHook('onSend', async (req, reply) => {
 });
 
 await app.register(publicRoutes, { prefix: '/api' });
+await app.register(publicShareRoutes, { prefix: '/api' });
 
 await app.register(async (api) => {
   api.addHook('preHandler', requireAuth);
@@ -55,6 +58,7 @@ await app.register(async (api) => {
   await api.register(vaultRoutes);
   await api.register(nodeRoutes);
   await api.register(transferRoutes);
+  await api.register(socialRoutes);
 
   // ---- живая синхронизация: изменения дерева и текста, кто сейчас в хранилище
   api.get<{ Querystring: { vault?: string; client?: string } }>('/ws', { websocket: true }, async (socket, req) => {

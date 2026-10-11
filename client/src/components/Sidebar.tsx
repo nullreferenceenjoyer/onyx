@@ -3,11 +3,12 @@ import { nodeMenu, rootMenu, userMenu, vaultMenu } from '../actions';
 import { api } from '../api';
 import { Icon, Logo } from '../icons';
 import {
-  activeId, byId, canWrite, children, createNode, currentVault, expanded, isMobile, me, moveNode, online, openFile, openMenu, overlay, pathOf,
+  activeId, byId, canWrite, children, createNode, currentVault, expanded, isMobile, leftOpen, mainView, me, moveNode, online, openFile, openMenu, overlay, pathOf,
   presence, searchQuery, sideTab, toggleFolder, treeLoaded, uploadFiles, vaultId,
 } from '../store';
 import type { TreeNode } from '../types';
 import { displayName, isImage, isMarkdown, splitExt } from '../util';
+import { openDaily } from '../templates';
 import { useLongPress } from './ui';
 
 const DRAG_TYPE = 'application/x-onyx-node';
@@ -151,6 +152,7 @@ export function Sidebar() {
   const user = me.value!;
   const tab = sideTab.value;
   const others = new Set(presence.value.filter((p) => p.userId !== user.id).map((p) => p.userId)).size;
+  const go = (view: 'graph' | 'profile') => { mainView.value = mainView.value === view ? 'doc' : view; if (isMobile.value) leftOpen.value = false; };
   return (
     <aside class="sidebar panel" aria-label="Файлы">
       <div class="side-inner">
@@ -166,6 +168,14 @@ export function Sidebar() {
             <Icon name="chevronDown" size={16} />
           </button>
         </div>
+        {vault ? (
+          <div class="side-quick">
+            <button type="button" class={`quick${mainView.value === 'graph' ? ' is-active' : ''}`} title="Граф связей (Alt+G)" onClick={() => go('graph')}><Icon name="graph" size={17} /><span>Граф</span></button>
+            <button type="button" class="quick" title="Шаблоны (Alt+T)" onClick={() => { overlay.value = { type: 'templates' }; }}><Icon name="template" size={17} /><span>Шаблоны</span></button>
+            <button type="button" class="quick" title="Заметка на сегодня (Alt+D)" disabled={!canWrite.value} onClick={openDaily}><Icon name="calendar" size={17} /><span>Сегодня</span></button>
+            <button type="button" class={`quick${mainView.value === 'profile' ? ' is-active' : ''}`} title="Профиль и активность" onClick={() => go('profile')}><Icon name="user" size={17} /><span>Профиль</span></button>
+          </div>
+        ) : null}
         <div class="side-tools">
           <div class="seg">
             <button type="button" class={`seg-btn${tab === 'files' ? ' is-active' : ''}`} onClick={() => { sideTab.value = 'files'; }}>Файлы</button>

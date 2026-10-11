@@ -51,6 +51,16 @@ export async function destroySession(req: FastifyRequest, reply: FastifyReply) {
   reply.clearCookie(COOKIE, { path: '/' });
 }
 
+// для публичных страниц: кто смотрит, если он вошёл (без ошибки, если нет)
+export async function currentUser(req: FastifyRequest): Promise<SessionUser | null> {
+  const token = req.cookies[COOKIE];
+  if (!token) return null;
+  const { rows } = await q(
+    `select s.id as session_id, u.id, u.login, u.display_name from sessions s join users u on u.id = s.user_id
+      where s.token_hash = $1 and s.expires_at > now()`, [sha(token)]);
+  return rows[0] ? { id: rows[0].id, login: rows[0].login, displayName: rows[0].display_name, sessionId: rows[0].session_id } : null;
+}
+
 export async function requireAuth(req: FastifyRequest, reply: FastifyReply) {
   const token = req.cookies[COOKIE];
   if (!token) throw new HttpError(401, 'Требуется вход');

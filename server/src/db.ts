@@ -75,6 +75,52 @@ const MIGRATIONS: [string, string][] = [
     create unique index nodes_unique_name on nodes (vault_id, coalesce(parent_id, '${ROOT}'::uuid), lower(name));
     create index nodes_parent on nodes(parent_id);
   `],
+  ['002_social', `
+    -- доступ к отдельной заметке или папке: по ссылке для всех (user_id is null) или конкретному человеку
+    create table shares (
+      id uuid primary key default gen_random_uuid(),
+      token text not null unique,
+      node_id uuid not null references nodes(id) on delete cascade,
+      vault_id uuid not null references vaults(id) on delete cascade,
+      created_by uuid not null references users(id) on delete cascade,
+      user_id uuid references users(id) on delete cascade,
+      listed boolean not null default false,
+      expires_at timestamptz,
+      views integer not null default 0,
+      created_at timestamptz not null default now()
+    );
+    create index shares_node on shares(node_id);
+    create index shares_user on shares(user_id);
+    create index shares_author on shares(created_by);
+
+    -- ежедневная активность: «правка» — это сеанс работы над заметкой (паузы до 10 минут сеанс не разрывают).
+    -- Без внешних ключей на заметку: история остаётся и после удаления файла.
+    create table activity (
+      user_id uuid not null references users(id) on delete cascade,
+      node_id uuid not null,
+      vault_id uuid not null,
+      day date not null,
+      name text not null,
+      sessions integer not null default 1,
+      chars integer not null default 0,
+      last_at timestamptz not null default now(),
+      primary key (user_id, node_id, day)
+    );
+    create index activity_user_day on activity(user_id, day);
+
+    -- история версий: снимок текста перед началом нового сеанса правок
+    create table revisions (
+      id uuid primary key default gen_random_uuid(),
+      node_id uuid not null references nodes(id) on delete cascade,
+      user_id uuid references users(id) on delete set null,
+      content text not null,
+      size integer not null default 0,
+      created_at timestamptz not null default now()
+    );
+    create index revisions_node on revisions(node_id, created_at desc);
+
+    alter table users add column bio text not null default '', add column profile_public boolean not null default false;
+  `],
 ];
 
 export async function migrate(log: (m: string) => void) {

@@ -99,6 +99,7 @@ function editorMenu(view: EditorView, md: boolean, link: DOMStringMap | null): M
           { label: 'Блок кода', icon: ico('codeBlock'), onClick: () => insertCodeBlock(view) },
           { label: 'Таблица', icon: ico('table'), onClick: () => insertTable(view) },
           { label: 'Разделитель', icon: ico('minus'), onClick: () => insertHr(view) },
+          { label: 'Шаблон…', icon: ico('template'), hint: 'Alt+T', onClick: () => { overlay.value = { type: 'templates' }; } },
           { sep: true },
           { label: 'Врезка: заметка', icon: ico('callout'), onClick: () => insertCallout(view, 'note') },
           { label: 'Врезка: совет', icon: ico('callout'), onClick: () => insertCallout(view, 'tip') },

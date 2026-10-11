@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'preact/hooks';
 import { exportMenu, findInNote, MOD, nodeMenu, tabMenu, toggleRead } from '../actions';
 import { Icon } from '../icons';
 import {
-  activeId, byId, canWrite, closeTab, docs, docTick, isMobile, leftOpen, me, online, openFile, openMenu, presence, renameNode, rightOpen, setMode,
+  activeId, byId, canWrite, closeTab, docs, docTick, isMobile, leftOpen, me, online, openFile, openMenu, overlay, presence, renameNode, rightOpen, setMode,
   settings, tabs, updateSettings,
 } from '../store';
 import type { MenuItem, Mode } from '../types';
@@ -110,6 +110,10 @@ export function Header() {
             ))}
           </div>
         )
+      ) : null}
+      {node && canWrite.value ? (
+        <button type="button" class="icon-btn only-desktop" title="Поделиться: ссылка для всех или доступ человеку" aria-label="Поделиться"
+          onClick={() => { overlay.value = { type: 'shareNode', nodeId: node.id }; }}><Icon name="share" /></button>
       ) : null}
       <button type="button" class="btn export-btn" title="Выгрузка: файл, папка или всё хранилище" onClick={(e) => openMenu(e.currentTarget as HTMLElement, exportMenu())}>
         <Icon name="download" size={mobile ? 18 : 16} /><span>Выгрузка</span>

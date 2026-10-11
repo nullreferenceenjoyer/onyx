@@ -33,6 +33,10 @@ export const expanded = signal<Set<string>>(new Set());
 export const presence = signal<Presence[]>([]);
 export const online = signal(true);
 export const searchQuery = signal('');
+// что показано в основной области поверх документа: граф связей или профиль с активностью
+export const mainView = signal<'doc' | 'graph' | 'profile'>('doc');
+// меняется, когда кто-то открыл или закрыл мне доступ к заметке
+export const sharesTick = signal(0);
 
 const mobileMQ = matchMedia('(max-width: 820px)');
 export const isMobile = signal(mobileMQ.matches);
@@ -132,6 +136,9 @@ export type Overlay =
   | { type: 'vaults' }
   | { type: 'share'; vaultId: string }
   | { type: 'move'; nodeId: string }
+  | { type: 'templates' }
+  | { type: 'shareNode'; nodeId: string }
+  | { type: 'history'; nodeId: string }
   | null;
 export const overlay = signal<Overlay>(null);
 
@@ -320,6 +327,19 @@ async function restoreDraft(doc: Doc) {
   }).then(() => { toast('Несохранённые правки восстановлены в отдельной заметке'); loadTree(); }).catch(() => {});
 }
 
+// замена текста как обычная правка: попадает в историю отмены и сохраняется (восстановление версии, вставка шаблона)
+export function setDocText(id: string, next: string) {
+  const doc = docs.get(id);
+  if (!doc?.loaded) return;
+  const cur = getText(doc);
+  if (cur === next) return;
+  if (!doc.state) { doc.text = next; doc.dirty = true; scheduleSave(doc, 300); bumpText(); bump(); return; }
+  const spec = { changes: diffChanges(cur, next) };
+  const view = editorRef.view;
+  if (view && view.state === doc.state) view.dispatch(spec);
+  else docChanged(id, doc.state.update(spec).state, false);
+}
+
 export function setMode(id: string, mode: Mode) {
   const doc = docs.get(id);
   if (!doc || doc.mode === mode) return;
@@ -339,6 +359,7 @@ export function openFile(id: string, opts: { anchor?: string } = {}) {
   batch(() => {
     if (!tabs.value.includes(id)) tabs.value = [...tabs.value, id];
     activeId.value = id;
+    mainView.value = 'doc';
     if (isMobile.value) leftOpen.value = false;
   });
   revealInTree(id);
@@ -548,7 +569,7 @@ export async function selectVault(id: string | null) {
   docs.clear();
   batch(() => {
     vaultId.value = id;
-    nodes.value = []; tabs.value = []; activeId.value = null; presence.value = []; treeLoaded.value = false;
+    nodes.value = []; tabs.value = []; activeId.value = null; presence.value = []; treeLoaded.value = false; mainView.value = 'doc';
     expanded.value = new Set(id ? ls.get<string[]>(`onyx.v.${id}.expanded`, []) : []);
   });
   bump();
@@ -608,7 +629,7 @@ export async function signOut() {
   await api('POST', '/auth/logout').catch(() => {});
   disconnect();
   docs.clear();
-  batch(() => { vaultId.value = null; vaults.value = []; nodes.value = []; tabs.value = []; activeId.value = null; me.value = null; });
+  batch(() => { vaultId.value = null; vaults.value = []; nodes.value = []; tabs.value = []; activeId.value = null; mainView.value = 'doc'; me.value = null; });
 }
 
 // ---------------------------------------------------------------- живая синхронизация
@@ -639,6 +660,7 @@ function connect() {
     if (m.t === 'presence') presence.value = m.users;
     else if (m.t === 'tree') { if (m.origin !== clientId) loadTreeSoon(); }
     else if (m.t === 'vaults') loadVaults().catch(() => {});
+    else if (m.t === 'shares') sharesTick.value++;
     else if (m.t === 'content') {
       patchNode(m.id, { version: m.version, size: m.size, updatedAt: m.updatedAt });
       const doc = docs.get(m.id);

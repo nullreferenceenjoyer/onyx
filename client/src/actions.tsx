@@ -2,8 +2,9 @@ import { openSearchPanel } from '@codemirror/search';
 import { api } from './api';
 import { Icon } from './icons';
 import { exportHtml, printNote } from './render/export';
+import { openDaily, saveAsTemplate } from './templates';
 import {
-  activeId, ask, byId, canWrite, closeOthers, closeTab, createNode, createVault, currentVault, deleteNode, docs, downloadNode, duplicateNode,
+  activeId, ask, byId, mainView, canWrite, closeOthers, closeTab, createNode, createVault, currentVault, deleteNode, docs, downloadNode, duplicateNode,
   editorRef, exportVault, fail, isMobile, leftOpen, loadVaults, me, overlay, pathOf, pickAndUpload, renameNode, revealInTree, rightOpen, saveAll,
   searchFor, selectVault, setExpanded, setMode, settings, signOut, tabs, toast, updateSettings, vaults, wikiLabel,
 } from './store';
@@ -92,6 +93,7 @@ export function nodeMenu(node: TreeNode): MenuItem[] {
         { label: 'Переименовать', icon: ico('pencil'), hint: 'F2', onClick: () => renameNode(node.id) },
         { label: 'Переместить…', icon: ico('move'), onClick: () => { overlay.value = { type: 'move', nodeId: node.id }; } },
       ] : []),
+      ...(w ? [{ label: 'Поделиться…', icon: ico('share'), onClick: () => { overlay.value = { type: 'shareNode', nodeId: node.id }; } }] : []),
       { label: 'Скачать архивом (.zip)', icon: ico('archive'), onClick: () => downloadNode(node.id) },
       { label: 'Скопировать путь', icon: ico('copy'), onClick: () => copyText(pathOf(node.id)) },
       ...(w ? [{ sep: true as const }, { label: 'Удалить', icon: ico('trash'), danger: true, onClick: () => deleteNode(node.id) }] : []),
@@ -104,6 +106,10 @@ export function nodeMenu(node: TreeNode): MenuItem[] {
       { label: 'Переместить…', icon: ico('move'), onClick: () => { overlay.value = { type: 'move', nodeId: node.id }; } },
       { sep: true as const },
     ] : []),
+    ...(w ? [{ label: 'Поделиться…', icon: ico('share'), onClick: () => { overlay.value = { type: 'shareNode', nodeId: node.id }; } }] : []),
+    ...(!node.binary ? [{ label: 'История версий', icon: ico('clock'), onClick: () => { overlay.value = { type: 'history', nodeId: node.id }; } }] : []),
+    ...(w && md ? [{ label: 'Сохранить как шаблон', icon: ico('template'), onClick: () => saveAsTemplate(node) }] : []),
+    { sep: true },
     { label: 'Скопировать ссылку [[…]]', icon: ico('brackets'), onClick: () => copyText(`[[${wikiLabel(node)}]]`) },
     { label: 'Скопировать путь', icon: ico('copy'), onClick: () => copyText(pathOf(node.id)) },
     { sep: true },
@@ -121,10 +127,13 @@ export function rootMenu(): MenuItem[] {
     ...(canWrite.value ? [
       { label: 'Новая заметка', icon: ico('filePlus'), hint: 'Alt+N', onClick: () => createNode('file', null) },
       { label: 'Новая папка', icon: ico('folderPlus'), onClick: () => createNode('folder', null) },
+      { label: 'Заметка из шаблона…', icon: ico('template'), onClick: () => { overlay.value = { type: 'templates' }; } },
+      { label: 'Заметка на сегодня', icon: ico('calendar'), hint: 'Alt+D', onClick: openDaily },
       { sep: true as const },
       ...uploadItems(null),
       { sep: true as const },
     ] : []),
+    { label: 'Граф связей', icon: ico('graph'), hint: 'Alt+G', onClick: () => { mainView.value = 'graph'; closeSidebarsOnMobile(); } },
     { label: 'Свернуть все папки', icon: ico('collapse'), onClick: () => setExpanded(new Set()) },
     { label: 'Выгрузить хранилище (.zip)', icon: ico('vault'), onClick: exportVault },
   ];
@@ -193,6 +202,7 @@ export function vaultMenu(): MenuItem[] {
 export function userMenu(): MenuItem[] {
   const dark = document.documentElement.dataset.theme === 'dark';
   return [
+    { label: 'Профиль и активность', icon: ico('user'), onClick: () => { mainView.value = 'profile'; closeSidebarsOnMobile(); } },
     { label: 'Настройки', icon: ico('settings'), hint: `${MOD}+,`, onClick: () => { overlay.value = { type: 'settings' }; } },
     { label: dark ? 'Светлая тема' : 'Тёмная тема', icon: ico('palette'), onClick: () => updateSettings({ theme: dark ? 'light' : 'dark' }) },
     { label: 'Палитра команд', icon: ico('sparkles'), hint: `${MOD}+P`, onClick: () => { overlay.value = { type: 'palette', mode: 'commands' }; } },
@@ -212,6 +222,13 @@ export function commandList(): Command[] {
   const list: (Command | false | undefined)[] = [
     w && { label: 'Новая заметка', icon: 'filePlus', keys: 'Alt+N', run: () => createNode('file') },
     w && { label: 'Новая папка', icon: 'folderPlus', run: () => createNode('folder') },
+    w && { label: 'Заметка из шаблона / вставить шаблон', icon: 'template', keys: 'Alt+T', run: () => { overlay.value = { type: 'templates' }; } },
+    w && { label: 'Заметка на сегодня', icon: 'calendar', keys: 'Alt+D', run: openDaily },
+    { label: 'Граф связей', icon: 'graph', keys: 'Alt+G', run: () => { mainView.value = 'graph'; } },
+    { label: 'Профиль и активность', icon: 'user', run: () => { mainView.value = 'profile'; } },
+    node && w && { label: 'Поделиться заметкой', icon: 'share', run: () => { overlay.value = { type: 'shareNode', nodeId: node.id }; } },
+    node && !node.binary && { label: 'История версий', icon: 'clock', run: () => { overlay.value = { type: 'history', nodeId: node.id }; } },
+    node && w && isMarkdown(node.name) && { label: 'Сохранить заметку как шаблон', icon: 'template', run: () => saveAsTemplate(node) },
     { label: 'Быстрый переход к файлу', icon: 'search', keys: `${MOD}+O`, run: () => { overlay.value = { type: 'palette', mode: 'files' }; } },
     { label: 'Поиск по хранилищу', icon: 'search', keys: `${MOD}+Shift+F`, run: () => searchFor('') },
     node && !node.binary && { label: 'Найти в заметке', icon: 'search', keys: `${MOD}+F`, run: findInNote },
@@ -250,6 +267,10 @@ export function handleGlobalKey(e: KeyboardEvent): boolean {
   if (mod && key === ',') { overlay.value = { type: 'settings' }; return true; }
   if (mod && !e.shiftKey && code === 'KeyS') { saveAll(); return true; }
   if (e.altKey && !mod && code === 'KeyN' && canWrite.value) { createNode('file'); return true; }
+  if (e.altKey && !mod && code === 'KeyT' && canWrite.value) { overlay.value = { type: 'templates' }; return true; }
+  if (e.altKey && !mod && code === 'KeyD' && canWrite.value) { openDaily(); return true; }
+  if (e.altKey && !mod && code === 'KeyG') { mainView.value = mainView.value === 'graph' ? 'doc' : 'graph'; return true; }
+  if (e.key === 'Escape' && mainView.value !== 'doc' && !overlay.value) { mainView.value = 'doc'; return true; }
   if (e.altKey && !mod && code === 'KeyW' && activeId.value) { closeTab(activeId.value); return true; }
   if (key === 'f2' && activeId.value && canWrite.value) { renameNode(activeId.value); return true; }
   // в режиме чтения Ctrl+F открывает поиск редактора, а не браузера

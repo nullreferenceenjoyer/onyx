@@ -1,8 +1,9 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { NODE_COLS, nodeCtx, nodeDto, splitExt, uniqueName, vaultRole } from '../access.js';
-import { q, tx } from '../db.js';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { NODE_COLS, nodeCtx, nodeDto, type NodeRow, splitExt, uniqueName, vaultRole } from '../access.js';
+import { recordActivity, tzOffset } from '../activity.js';
+import { pool, q, tx } from '../db.js';
 import { hub } from '../hub.js';
-import { bad, cleanName, contentDisposition, escapeLike, escapeRegex } from '../http.js';
+import { bad, cleanName, contentDisposition, escapeLike, escapeRegex, notFound } from '../http.js';
 
 const origin = (req: FastifyRequest) => String(req.headers['x-client-id'] ?? '');
 const treeChanged = (vaultId: string, req: FastifyRequest) => hub.toVault(vaultId, { t: 'tree', origin: origin(req) });
@@ -32,7 +33,63 @@ function snippets(content: string, test: (line: string) => number, max = 3): str
   return out;
 }
 
+const MAX_REVISIONS = 60;
+
+export async function sendRaw(req: FastifyRequest, reply: FastifyReply, node: NodeRow, download = false) {
+  if (node.kind !== 'file') throw bad('Это папка');
+  const etag = `"${node.id}-${node.version}"`;
+  reply.header('ETag', etag).header('Cache-Control', 'private, no-cache').header('X-Content-Type-Options', 'nosniff')
+    .header('Content-Security-Policy', "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:");
+  if (req.headers['if-none-match'] === etag) return reply.code(304).send();
+  const row = (await q('select content, blob from nodes where id = $1', [node.id])).rows[0];
+  const ext = splitExt(node.name)[1].slice(1).toLowerCase();
+  if (row.blob) {
+    const mime = INLINE_MIME[ext];
+    // у PDF «песочница» ломает встроенный просмотрщик, а скриптов из нашего источника он не выполняет
+    if (ext === 'pdf') reply.removeHeader('Content-Security-Policy');
+    reply.header('Content-Type', mime ?? 'application/octet-stream')
+      .header('Content-Disposition', contentDisposition(node.name, !!mime && !download));
+    return reply.send(row.blob);
+  }
+  reply.header('Content-Type', 'text/plain; charset=utf-8').header('Content-Disposition', contentDisposition(node.name, !download));
+  return reply.send(row.content ?? '');
+}
+
+// цели ссылок в тексте: [[Заметка]], [[Папка/Заметка#Раздел|подпись]], ![[картинка.png]] и [текст](файл.md)
+export function linkTargets(content: string): string[] {
+  const out = new Set<string>();
+  for (const m of content.matchAll(/\[\[([^\]\[|#\n]+)/g)) out.add(m[1].trim());
+  for (const m of content.matchAll(/\]\(([^)\s#]+\.(?:md|png|jpe?g|gif|webp|svg|pdf))\)/gi)) {
+    if (/^[a-z][a-z0-9+.-]*:/i.test(m[1])) continue;
+    try { out.add(decodeURIComponent(m[1])); } catch { out.add(m[1]); }
+  }
+  return [...out];
+}
+
 export async function nodeRoutes(app: FastifyInstance) {
+  // ---- граф связей: для каждого текстового файла — на что он ссылается (имена разрешает клиент)
+  app.get<{ Params: { id: string } }>('/vaults/:id/graph', async (req) => {
+    await vaultRole(req.user.id, req.params.id);
+    const { rows } = await q(
+      "select id, content from nodes where vault_id = $1 and kind = 'file' and blob is null and (content like '%[[%' or content like '%](%')", [req.params.id]);
+    return { links: rows.map((r) => ({ id: r.id, targets: linkTargets(r.content) })).filter((r) => r.targets.length) };
+  });
+
+  // ---- история версий
+  app.get<{ Params: { id: string } }>('/nodes/:id/revisions', async (req) => {
+    const { node } = await nodeCtx(req.user.id, req.params.id);
+    const { rows } = await q(
+      `select r.id, r.size, r.created_at, u.display_name from revisions r left join users u on u.id = r.user_id
+        where r.node_id = $1 order by r.created_at desc`, [node.id]);
+    return { revisions: rows.map((r) => ({ id: r.id, size: r.size, createdAt: r.created_at, author: r.display_name ?? 'удалённый пользователь' })) };
+  });
+  app.get<{ Params: { id: string; rev: string } }>('/nodes/:id/revisions/:rev', async (req) => {
+    const { node } = await nodeCtx(req.user.id, req.params.id);
+    const row = (await q('select content from revisions where id = $1 and node_id = $2', [req.params.rev, node.id])).rows[0];
+    if (!row) throw notFound('Версия не найдена');
+    return { content: row.content };
+  });
+
   app.get<{ Params: { id: string } }>('/vaults/:id/tree', async (req) => {
     const role = await vaultRole(req.user.id, req.params.id);
     const { rows } = await q(`select ${NODE_COLS} from nodes where vault_id = $1`, [req.params.id]);
@@ -58,6 +115,7 @@ export async function nodeRoutes(app: FastifyInstance) {
          values ($1, $2, $3, $4, $5::text, coalesce(octet_length($5::text), 0), $6) returning ${NODE_COLS}`,
         [req.params.id, parentId, name, kind, content, req.user.id])).rows[0];
     });
+    if (kind === 'file') await recordActivity(pool, req.user.id, node, node.size, tzOffset(req)).catch(() => {});
     treeChanged(req.params.id, req);
     return { node: nodeDto(node) };
   });
@@ -71,24 +129,7 @@ export async function nodeRoutes(app: FastifyInstance) {
 
   app.get<{ Params: { id: string }; Querystring: { download?: string } }>('/nodes/:id/raw', async (req, reply) => {
     const { node } = await nodeCtx(req.user.id, req.params.id);
-    if (node.kind !== 'file') throw bad('Это папка');
-    const etag = `"${node.id}-${node.version}"`;
-    reply.header('ETag', etag).header('Cache-Control', 'private, no-cache').header('X-Content-Type-Options', 'nosniff')
-      .header('Content-Security-Policy', "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:");
-    if (req.headers['if-none-match'] === etag) return reply.code(304).send();
-    const row = (await q('select content, blob from nodes where id = $1', [node.id])).rows[0];
-    const ext = splitExt(node.name)[1].slice(1).toLowerCase();
-    const download = req.query.download === '1';
-    if (row.blob) {
-      const mime = INLINE_MIME[ext];
-      // у PDF «песочница» ломает встроенный просмотрщик, а скриптов из нашего источника он не выполняет
-      if (ext === 'pdf') reply.removeHeader('Content-Security-Policy');
-      reply.header('Content-Type', mime ?? 'application/octet-stream')
-        .header('Content-Disposition', contentDisposition(node.name, !!mime && !download));
-      return reply.send(row.blob);
-    }
-    reply.header('Content-Type', 'text/plain; charset=utf-8').header('Content-Disposition', contentDisposition(node.name, !download));
-    return reply.send(row.content ?? '');
+    return sendRaw(req, reply, node, req.query.download === '1');
   });
 
   app.put<{ Params: { id: string } }>('/nodes/:id/content', async (req, reply) => {
@@ -96,10 +137,27 @@ export async function nodeRoutes(app: FastifyInstance) {
     if (node.kind !== 'file' || node.binary) throw bad('Этот файл нельзя редактировать как текст');
     const body = (req.body ?? {}) as any;
     if (typeof body.content !== 'string' || body.content.includes('\u0000')) throw bad('Недопустимое содержимое');
-    const { rows } = await q(
-      `update nodes set content = $1::text, size = octet_length($1::text), version = version + 1, updated_at = now(), updated_by = $2
-        where id = $3 and version = $4 returning version, size, updated_at`,
-      [body.content, req.user.id, node.id, Number(body.baseVersion)]);
+    const tz = tzOffset(req);
+    const rows = await tx(async (c) => {
+      const prev = (await c.query(
+        `select content, size, updated_by, updated_at, now() - updated_at > interval '10 minutes' as idle,
+                not exists (select 1 from revisions where node_id = $1 and created_at > now() - interval '30 minutes') as stale
+           from nodes where id = $1 and version = $2 for update`, [node.id, Number(body.baseVersion)])).rows[0];
+      if (!prev) return [];
+      // снимок прежнего текста — когда начинается новый сеанс правок или текст перехватил другой человек
+      if (prev.content && prev.content !== body.content && (prev.idle || prev.stale || prev.updated_by !== req.user.id)) {
+        await c.query('insert into revisions (node_id, user_id, content, size, created_at) values ($1, $2, $3, $4, $5)',
+          [node.id, prev.updated_by, prev.content, prev.size, prev.updated_at]);
+        await c.query(
+          `delete from revisions where node_id = $1 and id not in (select id from revisions where node_id = $1 order by created_at desc limit ${MAX_REVISIONS})`,
+          [node.id]);
+      }
+      const res = await c.query(
+        `update nodes set content = $1::text, size = octet_length($1::text), version = version + 1, updated_at = now(), updated_by = $2
+          where id = $3 returning version, size, updated_at`, [body.content, req.user.id, node.id]);
+      await recordActivity(c, req.user.id, node, Math.abs(res.rows[0].size - prev.size), tz);
+      return res.rows;
+    });
     if (!rows[0]) {
       // кто-то сохранил раньше: отдаём свежий текст, клиент сольёт правки и повторит
       const cur = (await q('select content, version from nodes where id = $1', [node.id])).rows[0];
