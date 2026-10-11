@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ru" data-theme="dark" data-skin="graphite">
+<head>
+  <meta charset="utf-8">
+  <!-- без масштабирования жестами: приложение ведёт себя как нативное -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#0a0b0d">
+  <meta name="color-scheme" content="dark light">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Оникс">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <title>Оникс</title>
+  <script src="/boot.js"></script>
+</head>
+<body>
+  <div class="ambient" aria-hidden="true"><div class="wave"></div></div>
+  <div id="app"></div>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+</html>
