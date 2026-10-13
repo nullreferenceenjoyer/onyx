@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { commandList } from '../actions';
 import { Icon } from '../icons';
-import { byId, canWrite, children, files, moveNode, openFile, openLink, overlay, pathOf, tabs } from '../store';
+import { byId, canWrite, children, files, moveNodes, openFile, openLink, overlay, pathOf, tabs } from '../store';
 import type { TreeNode } from '../types';
 import { displayName, isImage, isMarkdown } from '../util';
 import { Modal } from './ui';
@@ -97,7 +97,7 @@ export function Palette({ mode }: { mode: 'files' | 'commands' }) {
 }
 
 // выбор папки для перемещения — на телефоне заменяет перетаскивание
-export function MoveDialog({ nodeId }: { nodeId: string }) {
+export function MoveDialog({ nodeId, ids = [nodeId] }: { nodeId: string; ids?: string[] }) {
   const [q, setQ] = useState('');
   const close = () => { overlay.value = null; };
   const node = byId.value.get(nodeId);
@@ -108,7 +108,7 @@ export function MoveDialog({ nodeId }: { nodeId: string }) {
     const walk = (parent: string) => {
       for (const n of children.value.get(parent) ?? []) {
         // папку нельзя переносить в саму себя и в свои вложенные папки
-        if (n.kind !== 'folder' || n.id === nodeId) continue;
+        if (n.kind !== 'folder' || ids.includes(n.id)) continue;
         out.push({ id: n.id, path: pathOf(n.id) });
         walk(n.id);
       }
@@ -116,16 +116,16 @@ export function MoveDialog({ nodeId }: { nodeId: string }) {
     walk('');
     const query = q.trim();
     return out
-      .filter((f) => f.id !== node.parentId)
+      .filter((f) => ids.length > 1 || f.id !== node.parentId)
       .map((f) => ({ f, s: query ? score(query, f.path) : 0 })).filter((x) => x.s >= 0).sort((a, b) => b.s - a.s)
-      .map(({ f }) => ({ key: f.id ?? 'root', label: f.path, icon: f.id ? 'folder' : 'vault', run: () => moveNode(nodeId, f.id) }));
-  }, [q, children.value, nodeId]);
+      .map(({ f }) => ({ key: f.id ?? 'root', label: f.path, icon: f.id ? 'folder' : 'vault', run: () => moveNodes(ids, f.id) }));
+  }, [q, children.value, ids.join()]);
 
   const { onKey, render, input } = useList(items, close);
   if (!node) return null;
   return (
     <Modal onClose={close} class="palette">
-      <input ref={input} class="input palette-input" value={q} placeholder={`Куда переместить «${node.name}»?`} autocomplete="off" spellcheck={false}
+      <input ref={input} class="input palette-input" value={q} placeholder={ids.length > 1 ? `Куда переместить выбранное (${ids.length})?` : `Куда переместить «${node.name}»?`} autocomplete="off" spellcheck={false}
         onInput={(e) => setQ((e.target as HTMLInputElement).value)} onKeyDown={onKey} />
       {render('Подходящих папок нет')}
       <button type="button" class="btn btn-ghost only-mobile" style="margin:8px 12px 12px" onClick={close}>Отмена</button>

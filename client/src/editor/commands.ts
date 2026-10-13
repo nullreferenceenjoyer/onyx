@@ -1,12 +1,21 @@
 import { startCompletion } from '@codemirror/autocomplete';
-import { EditorSelection } from '@codemirror/state';
+import { type ChangeSpec, EditorSelection, type EditorState } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 
 // Команды форматирования: общие для горячих клавиш, контекстного меню и панели на телефоне.
 
+function starRun(state: EditorState, pos: number, dir: 1 | -1): number {
+  let k = 0;
+  while (k < 3 && state.sliceDoc(dir < 0 ? pos - k - 1 : pos + k, dir < 0 ? pos - k : pos + k + 1) === '*') k++;
+  return k;
+}
+
 export function toggleInline(view: EditorView, mark: string): boolean {
   const { state } = view;
   const n = mark.length;
+  // * и ** складываются в ***: по числу звёздочек вокруг текста видно, что уже включено
+  const stars = mark === '*' || mark === '**';
+  const on = (k: number) => (n === 1 ? k % 2 === 1 : k >= 2);
   view.dispatch(state.changeByRange((range) => {
     let { from, to } = range;
     // без выделения оборачиваем слово под курсором
@@ -15,14 +24,15 @@ export function toggleInline(view: EditorView, mark: string): boolean {
       if (word) { from = word.from; to = word.to; }
     }
     const before = state.sliceDoc(from - n, from), after = state.sliceDoc(to, to + n);
-    if (before === mark && after === mark) {
+    if (stars ? on(Math.min(starRun(state, from, -1), starRun(state, to, 1))) : before === mark && after === mark) {
       return {
         changes: [{ from: from - n, to: from }, { from: to, to: to + n }],
         range: EditorSelection.range(range.anchor - n, range.head - n),
       };
     }
     const inner = state.sliceDoc(from, to);
-    if (inner.length >= n * 2 && inner.startsWith(mark) && inner.endsWith(mark)) {
+    const own = Math.min(/^\**/.exec(inner)![0].length, /\**$/.exec(inner)![0].length, 3);
+    if (stars ? own * 2 < inner.length && on(own) : inner.length >= n * 2 && inner.startsWith(mark) && inner.endsWith(mark)) {
       return { changes: [{ from, to: from + n }, { from: to - n, to }], range: EditorSelection.range(from, to - n * 2) };
     }
     if (from === to) {
@@ -49,6 +59,13 @@ function selectedLines(view: EditorView) {
   return lines;
 }
 
+// курсор, стоявший в начале строки, оказывается после вставленной разметки, а не перед ней
+function applyPrefix(view: EditorView, spec: ChangeSpec) {
+  const changes = view.state.changes(spec);
+  view.dispatch({ changes, selection: view.state.selection.map(changes, 1), scrollIntoView: true, userEvent: 'input' });
+  view.focus();
+}
+
 const PREFIX = /^(\s*)(#{1,6}\s+|>\s?|[-*+]\s+\[[ xX]\]\s+|\d+[.)]\s+\[[ xX]\]\s+|[-*+]\s+|\d+[.)]\s+)?/;
 
 export function setHeading(view: EditorView, level: number): boolean {
@@ -57,8 +74,7 @@ export function setHeading(view: EditorView, level: number): boolean {
     const same = m?.[1].length === level;
     return { from: line.from, to: line.from + (m ? m[0].length : 0), insert: level && !same ? '#'.repeat(level) + ' ' : '' };
   });
-  view.dispatch({ changes, scrollIntoView: true, userEvent: 'input' });
-  view.focus();
+  applyPrefix(view, changes);
   return true;
 }
 
@@ -79,8 +95,7 @@ export function toggleLinePrefix(view: EditorView, kind: 'bullet' | 'number' | '
     const insert = kind === 'bullet' ? '- ' : kind === 'task' ? '- [ ] ' : `${++num}. `;
     return { from: from + keep, to: from + old.length, insert };
   });
-  view.dispatch({ changes, scrollIntoView: true, userEvent: 'input' });
-  view.focus();
+  applyPrefix(view, changes);
   return true;
 }
 

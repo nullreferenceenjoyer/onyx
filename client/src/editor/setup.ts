@@ -1,6 +1,6 @@
 import { autocompletion, closeBrackets, closeBracketsKeymap, type CompletionContext, completionKeymap } from '@codemirror/autocomplete';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
-import { markdown, markdownKeymap, markdownLanguage } from '@codemirror/lang-markdown';
+import { deleteMarkupBackward, insertNewlineContinueMarkupCommand, markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { yamlFrontmatter } from '@codemirror/lang-yaml';
 import { bracketMatching, HighlightStyle, indentOnInput, indentUnit, LanguageDescription, syntaxHighlighting } from '@codemirror/language';
 import { languages } from '@codemirror/language-data';
@@ -12,6 +12,7 @@ import { activeId, byId, docChanged, docs, files, loadTree, pathOf, Remote, uplo
 import type { Mode } from '../types';
 import { isImage, isMarkdown, splitExt } from '../util';
 import { insertLink, toggleInline } from './commands';
+import { continueList, dedentListItem, indentListItem, taskShorthand } from './lists';
 import { livePreview } from './live';
 import { Hashtag, Highlight, Wikilink } from './syntax';
 
@@ -54,7 +55,7 @@ const theme = EditorView.theme({
 });
 
 const mdSupport = yamlFrontmatter({
-  content: markdown({ base: markdownLanguage, codeLanguages: languages, extensions: [Wikilink, Highlight, Hashtag], completeHTMLTags: false }),
+  content: markdown({ base: markdownLanguage, codeLanguages: languages, extensions: [Wikilink, Highlight, Hashtag], completeHTMLTags: false, addKeymap: false }),
 });
 
 // подсказка заметок после «[[»
@@ -77,6 +78,15 @@ function wikiCompletion(ctx: CompletionContext) {
     })),
   };
 }
+
+// списки ведёт lists.ts; библиотечная команда остаётся для цитат и продолжения абзацев внутри пунктов
+const mdKeymap = [
+  { key: 'Enter', run: continueList },
+  { key: 'Enter', run: insertNewlineContinueMarkupCommand({ nonTightLists: false }) },
+  { key: 'Backspace', run: deleteMarkupBackward },
+  { key: 'Tab', run: indentListItem },
+  { key: 'Shift-Tab', run: dedentListItem },
+];
 
 const stamp = () => new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
 
@@ -125,7 +135,7 @@ export function createState(id: string, name: string, text: string, hooks: Edito
         { key: 'Mod-k', run: (v) => md && insertLink(v) },
         { key: 'Mod-Shift-h', run: (v) => md && toggleInline(v, '==') },
         { key: 'Mod-Shift-x', run: (v) => md && toggleInline(v, '~~') },
-        ...(md ? markdownKeymap : []),
+        ...(md ? mdKeymap : []),
         ...closeBracketsKeymap,
         ...completionKeymap,
         ...searchKeymap,
@@ -135,6 +145,7 @@ export function createState(id: string, name: string, text: string, hooks: Edito
       ]),
       EditorView.scrollMargins.of(() => ({ bottom: 64, top: 8 })),
       langComp.of(md ? mdSupport : []),
+      md ? taskShorthand : [],
       modeComp.of([]),
       prefsComp.of([]),
       editableComp.of([]),

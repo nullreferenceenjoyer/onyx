@@ -96,7 +96,7 @@ function Shell() {
       {ov?.type === 'settings' ? <SettingsModal /> : null}
       {ov?.type === 'palette' ? <Palette key={ov.mode} mode={ov.mode} /> : null}
       {ov?.type === 'share' ? <ShareModal vaultId={ov.vaultId} /> : null}
-      {ov?.type === 'move' ? <MoveDialog nodeId={ov.nodeId} /> : null}
+      {ov?.type === 'move' ? <MoveDialog nodeId={ov.nodeId} ids={ov.ids} /> : null}
       {ov?.type === 'templates' ? <TemplatesModal /> : null}
       {ov?.type === 'shareNode' ? <ShareNodeModal nodeId={ov.nodeId} /> : null}
       {ov?.type === 'history' ? <HistoryModal nodeId={ov.nodeId} /> : null}

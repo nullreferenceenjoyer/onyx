@@ -4,9 +4,9 @@ import { Icon } from './icons';
 import { exportHtml, printNote } from './render/export';
 import { openDaily, saveAsTemplate } from './templates';
 import {
-  activeId, ask, byId, mainView, canWrite, closeOthers, closeTab, createNode, createVault, currentVault, deleteNode, docs, downloadNode, duplicateNode,
+  activeId, ask, byId, mainView, canWrite, closeOthers, closeTab, createNode, createVault, currentVault, deleteNode, deleteNodes, docs, downloadNode, duplicateNode,
   editorRef, exportVault, fail, isMobile, leftOpen, loadVaults, me, overlay, pathOf, pickAndUpload, renameNode, revealInTree, rightOpen, saveAll,
-  searchFor, selectVault, setExpanded, setMode, settings, signOut, tabs, toast, updateSettings, vaults, wikiLabel,
+  searchFor, selectionRoots, selectNode, selectVault, setExpanded, setMode, settings, signOut, tabs, toast, treeCursor, updateSettings, vaults, wikiLabel,
 } from './store';
 import type { MenuItem, TreeNode } from './types';
 import { isMarkdown } from './util';
@@ -119,6 +119,20 @@ export function nodeMenu(node: TreeNode): MenuItem[] {
       { label: 'Печать / PDF', icon: ico('printer'), onClick: () => printNote(node.id).catch(fail) },
     ] : []),
     ...(w ? [{ sep: true as const }, { label: 'Удалить', icon: ico('trash'), danger: true, onClick: () => deleteNode(node.id) }] : []),
+  ];
+}
+
+// несколько выделенных строк: действия применяются ко всем сразу
+export function selectionMenu(ids: string[]): MenuItem[] {
+  const list = selectionRoots(ids);
+  return [
+    { title: `Выбрано: ${ids.length}` },
+    ...(canWrite.value ? [
+      { label: 'Переместить…', icon: ico('move'), onClick: () => { overlay.value = { type: 'move', nodeId: list[0], ids: list }; } },
+      { label: 'Удалить', icon: ico('trash'), hint: 'Del', danger: true, onClick: () => deleteNodes(list) },
+      { sep: true as const },
+    ] : []),
+    { label: 'Снять выделение', icon: ico('x'), hint: 'Esc', onClick: () => selectNode(null) },
   ];
 }
 
@@ -272,7 +286,9 @@ export function handleGlobalKey(e: KeyboardEvent): boolean {
   if (e.altKey && !mod && code === 'KeyG') { mainView.value = mainView.value === 'graph' ? 'doc' : 'graph'; return true; }
   if (e.key === 'Escape' && mainView.value !== 'doc' && !overlay.value) { mainView.value = 'doc'; return true; }
   if (e.altKey && !mod && code === 'KeyW' && activeId.value) { closeTab(activeId.value); return true; }
-  if (key === 'f2' && activeId.value && canWrite.value) { renameNode(activeId.value); return true; }
+  // в дереве файлов F2 переименовывает выделенную строку, в остальных местах — открытую заметку
+  const renameId = (document.activeElement?.classList.contains('tree') ? treeCursor.value : null) ?? activeId.value;
+  if (key === 'f2' && renameId && canWrite.value) { renameNode(renameId); return true; }
   // в режиме чтения Ctrl+F открывает поиск редактора, а не браузера
   if (mod && !e.shiftKey && code === 'KeyF' && activeId.value && docs.get(activeId.value)?.mode === 'read') { findInNote(); return true; }
   return false;

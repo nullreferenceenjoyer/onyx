@@ -3,7 +3,7 @@ import { copyText } from '../actions';
 import { api } from '../api';
 import { Icon } from '../icons';
 import {
-  ask, byId, canWrite, currentVault, docs, ensureDoc, fail, getText, mainView, me, openFile, overlay, selectVault, setDocText, sharesTick, toast, vaultId,
+  ask, byId, canWrite, currentVault, docs, ensureDoc, fail, getText, mainView, me, openFile, overlay, saveAll, selectVault, setDocText, sharesTick, toast, vaultId,
 } from '../store';
 import type { DayStat, Share } from '../types';
 import { displayName, dmp, formatSize } from '../util';
@@ -135,7 +135,8 @@ export function ProfileView() {
   const tick = sharesTick.value;
 
   const loadShares = () => api('GET', '/shares').then(setShares).catch(() => {});
-  useEffect(() => { api('GET', '/activity').then((r) => { setDays(r.days); setTotals(r.totals); }).catch(fail); }, []);
+  // сначала досохраняем начатое: только что сделанная правка должна уже быть на карте
+  useEffect(() => { saveAll().catch(() => {}).then(() => api('GET', '/activity')).then((r) => { setDays(r.days); setTotals(r.totals); }).catch(fail); }, []);
   useEffect(() => { loadShares(); }, [tick]);
   useEffect(() => {
     if (!sel) return;
@@ -195,7 +196,7 @@ export function ProfileView() {
           <div class="card rise">
             <div class="card-head"><h3>Активность</h3><HeatLegend /></div>
             {days ? <Heatmap days={days} selected={sel} onSelect={setSel} /> : <div class="side-empty">Загрузка…</div>}
-            <p class="card-hint">Одна правка — это сеанс работы над заметкой: сохранения с паузами до 10 минут считаются одним сеансом.</p>
+            <p class="card-hint">Засчитывается и создание заметки, и её изменение. Пока вы пишете в одной заметке, правка добавляется не чаще раза в 10 минут.</p>
             {selDate ? (
               <div class="day-detail">
                 <h4>{selDate.toLocaleDateString('ru', { weekday: 'long', day: 'numeric', month: 'long' })}</h4>

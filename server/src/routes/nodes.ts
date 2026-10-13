@@ -115,7 +115,7 @@ export async function nodeRoutes(app: FastifyInstance) {
          values ($1, $2, $3, $4, $5::text, coalesce(octet_length($5::text), 0), $6) returning ${NODE_COLS}`,
         [req.params.id, parentId, name, kind, content, req.user.id])).rows[0];
     });
-    if (kind === 'file') await recordActivity(pool, req.user.id, node, node.size, tzOffset(req)).catch(() => {});
+    if (kind === 'file') await recordActivity(pool, req.user.id, node, node.size, tzOffset(req), true).catch(() => {});
     treeChanged(req.params.id, req);
     return { node: nodeDto(node) };
   });

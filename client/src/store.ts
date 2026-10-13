@@ -135,7 +135,7 @@ export type Overlay =
   | { type: 'palette'; mode: 'files' | 'commands' }
   | { type: 'vaults' }
   | { type: 'share'; vaultId: string }
-  | { type: 'move'; nodeId: string }
+  | { type: 'move'; nodeId: string; ids?: string[] }
   | { type: 'templates' }
   | { type: 'shareNode'; nodeId: string }
   | { type: 'history'; nodeId: string }
@@ -362,6 +362,7 @@ export function openFile(id: string, opts: { anchor?: string } = {}) {
     mainView.value = 'doc';
     if (isMobile.value) leftOpen.value = false;
   });
+  selectNode(id);
   revealInTree(id);
   persistTabs();
   sendPresence();
@@ -396,6 +397,54 @@ export function toggleFolder(id: string) {
   setExpanded(set);
 }
 
+// ---------------------------------------------------------------- выделение в дереве
+// Как в VS Code: щелчок выделяет строку, Ctrl добавляет к выделению, Shift — диапазон.
+// Выделенная папка (или папка выделенного файла) — место, куда попадают новые заметки.
+export const selected = signal<Set<string>>(new Set());
+export const treeCursor = signal<string | null>(null);
+let selAnchor: string | null = null;
+
+// строки дерева в том порядке, в каком они видны на экране
+export function visibleRows(): TreeNode[] {
+  const out: TreeNode[] = [];
+  const walk = (parent: string) => {
+    for (const n of children.value.get(parent) ?? []) {
+      out.push(n);
+      if (n.kind === 'folder' && expanded.value.has(n.id)) walk(n.id);
+    }
+  };
+  walk('');
+  return out;
+}
+
+export function selectNode(id: string | null, how: 'one' | 'toggle' | 'range' = 'one') {
+  if (!id) { selAnchor = null; batch(() => { selected.value = new Set(); treeCursor.value = null; }); return; }
+  let next: Set<string>;
+  if (how === 'toggle') {
+    next = new Set(selected.value);
+    if (!next.delete(id)) next.add(id);
+    selAnchor = id;
+  } else if (how === 'range' && selAnchor && byId.value.has(selAnchor)) {
+    const rows = visibleRows().map((n) => n.id);
+    const a = rows.indexOf(selAnchor), b = rows.indexOf(id);
+    next = a < 0 || b < 0 ? new Set([id]) : new Set(rows.slice(Math.min(a, b), Math.max(a, b) + 1));
+  } else {
+    next = new Set([id]);
+    selAnchor = id;
+  }
+  batch(() => { selected.value = next; treeCursor.value = id; });
+}
+
+// из выделенного берём только «верхние» строки: вложенное переезжает и удаляется вместе со своей папкой
+export function selectionRoots(ids: Iterable<string> = selected.value): string[] {
+  const set = new Set(ids);
+  return [...set].filter((id) => {
+    if (!byId.value.has(id)) return false;
+    for (let p = byId.value.get(id)?.parentId; p; p = byId.value.get(p)?.parentId) if (set.has(p)) return false;
+    return true;
+  });
+}
+
 // ---------------------------------------------------------------- дерево
 let treeSeq = 0;
 export async function loadTree() {
@@ -406,6 +455,12 @@ export async function loadTree() {
     const r = await api('GET', `/vaults/${vid}/tree`);
     if (seq !== treeSeq || vid !== vaultId.value) return;
     batch(() => { nodes.value = r.nodes; role.value = r.role; treeLoaded.value = true; });
+    if ([...selected.value].some((id) => !byId.value.has(id))) {
+      batch(() => {
+        selected.value = new Set([...selected.value].filter((id) => byId.value.has(id)));
+        if (!byId.value.has(treeCursor.value ?? '')) treeCursor.value = null;
+      });
+    }
     // вкладки удалённых файлов закрываем, остальные сверяем по версии
     for (const id of tabs.value) if (!byId.value.has(id)) { docs.delete(id); closeTab(id); }
     for (const doc of docs.values()) syncDoc(doc);
@@ -415,9 +470,11 @@ export async function loadTree() {
 }
 const loadTreeSoon = debounce(loadTree, 150);
 
+const activeParent = () => byId.value.get(activeId.value ?? '')?.parentId ?? null;
+// новое создаётся в выделенной папке или рядом с выделенным файлом; без выделения — рядом с открытой заметкой
 const defaultParent = () => {
-  const a = activeId.value ? byId.value.get(activeId.value) : undefined;
-  return a?.parentId ?? null;
+  const n = byId.value.get(treeCursor.value ?? '');
+  return n ? (n.kind === 'folder' ? n.id : n.parentId) : activeParent();
 };
 
 export async function createNode(kind: 'file' | 'folder', parentId: string | null = defaultParent()) {
@@ -454,28 +511,39 @@ export async function renameNode(id: string) {
   } catch (e) { fail(e); }
 }
 
-export async function moveNode(id: string, parentId: string | null) {
-  const node = byId.value.get(id);
-  if (!node || node.parentId === parentId || id === parentId) return;
-  try {
-    await api('PATCH', `/nodes/${id}`, { parentId });
-    await loadTree();
-    if (parentId && !expanded.value.has(parentId)) toggleFolder(parentId);
-  } catch (e) { fail(e); }
+export async function moveNodes(ids: string[], parentId: string | null) {
+  const list = selectionRoots(ids).filter((id) => {
+    if (byId.value.get(id)?.parentId === parentId) return false;
+    // папку нельзя переносить в саму себя и в свои вложенные папки
+    for (let p = parentId; p; p = byId.value.get(p)?.parentId ?? null) if (p === id) return false;
+    return true;
+  });
+  if (!list.length) return;
+  try { for (const id of list) await api('PATCH', `/nodes/${id}`, { parentId }); } catch (e) { fail(e); }
+  await loadTree();
+  if (parentId && !expanded.value.has(parentId)) toggleFolder(parentId);
 }
+export const moveNode = (id: string, parentId: string | null) => moveNodes([id], parentId);
 
-export async function deleteNode(id: string) {
-  const node = byId.value.get(id);
+export async function deleteNodes(ids: string[]) {
+  const list = selectionRoots(ids);
+  const node = byId.value.get(list[0] ?? '');
   if (!node) return;
-  const inside = node.kind === 'folder' ? (children.value.get(id)?.length ?? 0) : 0;
-  const yes = await ask.confirm({
+  const inside = node.kind === 'folder' ? (children.value.get(node.id)?.length ?? 0) : 0;
+  const yes = await ask.confirm(list.length > 1 ? {
+    title: 'Удалить выбранное?',
+    text: `Файлов и папок: ${list.length}. Они будут удалены вместе с содержимым без возможности восстановления.`,
+    confirmText: 'Удалить', danger: true,
+  } : {
     title: node.kind === 'folder' ? 'Удалить папку?' : 'Удалить файл?',
     text: `«${node.name}»${inside ? ' и всё её содержимое' : ''} будет удалено без возможности восстановления.`,
     confirmText: 'Удалить', danger: true,
   });
   if (!yes) return;
-  try { await api('DELETE', `/nodes/${id}`); await loadTree(); } catch (e) { fail(e); }
+  try { for (const id of list) await api('DELETE', `/nodes/${id}`); } catch (e) { fail(e); }
+  await loadTree();
 }
+export const deleteNode = (id: string) => deleteNodes([id]);
 
 export async function duplicateNode(id: string) {
   try {
@@ -537,7 +605,7 @@ export async function openLink(target: string) {
   const name = segs.pop()!;
   try {
     const r = await api('POST', `/vaults/${vaultId.value}/nodes`, {
-      parentId: defaultParent(), kind: 'file', content: '', name: /\.[a-z0-9]{1,10}$/i.test(name) ? name : `${name}.md`,
+      parentId: activeParent(), kind: 'file', content: '', name: /\.[a-z0-9]{1,10}$/i.test(name) ? name : `${name}.md`,
     });
     await loadTree();
     openFile(r.node.id);
@@ -570,6 +638,7 @@ export async function selectVault(id: string | null) {
   batch(() => {
     vaultId.value = id;
     nodes.value = []; tabs.value = []; activeId.value = null; presence.value = []; treeLoaded.value = false; mainView.value = 'doc';
+    selected.value = new Set(); treeCursor.value = null;
     expanded.value = new Set(id ? ls.get<string[]>(`onyx.v.${id}.expanded`, []) : []);
   });
   bump();

@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { nodeMenu, rootMenu, userMenu, vaultMenu } from '../actions';
+import { nodeMenu, rootMenu, selectionMenu, userMenu, vaultMenu } from '../actions';
 import { api } from '../api';
 import { Icon, Logo } from '../icons';
 import {
-  activeId, byId, canWrite, children, createNode, currentVault, expanded, isMobile, leftOpen, mainView, me, moveNode, online, openFile, openMenu, overlay, pathOf,
-  presence, searchQuery, sideTab, toggleFolder, treeLoaded, uploadFiles, vaultId,
+  activeId, byId, canWrite, children, createNode, currentVault, deleteNodes, expanded, isMobile, leftOpen, mainView, me, moveNodes, online, openFile, openMenu,
+  overlay, pathOf, presence, searchQuery, selected, selectionRoots, selectNode, sideTab, toggleFolder, treeCursor, treeLoaded, uploadFiles, vaultId, visibleRows,
 } from '../store';
 import type { TreeNode } from '../types';
 import { displayName, isImage, isMarkdown, splitExt } from '../util';
@@ -12,6 +12,17 @@ import { openDaily } from '../templates';
 import { useLongPress } from './ui';
 
 const DRAG_TYPE = 'application/x-onyx-node';
+// что именно тащат: одна строка или всё выделенное
+let dragIds: string[] = [];
+
+function onRowClick(e: MouseEvent, node: TreeNode) {
+  // фокус на дереве — чтобы сразу работали стрелки, F2 и Delete
+  (e.currentTarget as HTMLElement).closest<HTMLElement>('.tree')?.focus({ preventScroll: true });
+  if (e.shiftKey) { selectNode(node.id, 'range'); return; }
+  if (e.ctrlKey || e.metaKey) { selectNode(node.id, 'toggle'); return; }
+  selectNode(node.id);
+  if (node.kind === 'folder') toggleFolder(node.id); else openFile(node.id);
+}
 
 function Row({ node, depth }: { node: TreeNode; depth: number }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -19,13 +30,17 @@ function Row({ node, depth }: { node: TreeNode; depth: number }) {
   const folder = node.kind === 'folder';
   const open = folder && expanded.value.has(node.id);
   const active = activeId.value === node.id;
+  const picked = selected.value.has(node.id);
   const kids = folder ? children.value.get(node.id) ?? [] : [];
   const here = presence.value.filter((p) => p.nodeId === node.id && p.userId !== me.value?.id);
   const ext = splitExt(node.name)[1];
 
   const showMenu = (at: { clientX: number; clientY: number } | HTMLElement) => {
     setMenuOpen(true);
-    openMenu(at, nodeMenu(node));
+    // меню строки вне выделения относится только к ней; внутри выделения — ко всему выделенному
+    const many = picked && selected.value.size > 1;
+    if (!many) selectNode(node.id);
+    openMenu(at, many ? selectionMenu([...selected.value]) : nodeMenu(node));
     // подсветка строки держится, пока открыто её меню
     const off = () => { setMenuOpen(false); window.removeEventListener('pointerdown', off, true); };
     setTimeout(() => window.addEventListener('pointerdown', off, true), 0);
@@ -35,14 +50,14 @@ function Row({ node, depth }: { node: TreeNode; depth: number }) {
   return (
     <>
       <div
-        class={`tree-row${active ? ' is-active' : ''}${open ? ' is-open' : ''}${menuOpen ? ' is-menu' : ''}${drop ? ' is-drop' : ''}`}
+        class={`tree-row${active ? ' is-active' : ''}${picked ? ' is-selected' : ''}${treeCursor.value === node.id ? ' is-cursor' : ''}${open ? ' is-open' : ''}${menuOpen ? ' is-menu' : ''}${drop ? ' is-drop' : ''}`}
         style={{ '--depth': depth }}
-        role="treeitem" aria-expanded={folder ? open : undefined} aria-selected={active} title={node.name}
+        role="treeitem" aria-expanded={folder ? open : undefined} aria-selected={picked} title={node.name} data-id={node.id}
         draggable={canWrite.value && !isMobile.value}
-        onClick={() => (folder ? toggleFolder(node.id) : openFile(node.id))}
+        onClick={(e) => onRowClick(e, node)}
         onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); showMenu(e); }}
         {...long}
-        onDragStart={(e) => { e.dataTransfer!.setData(DRAG_TYPE, node.id); e.dataTransfer!.setData('text/plain', node.name); e.dataTransfer!.effectAllowed = 'copyMove'; }}
+        onDragStart={(e) => { dragIds = picked ? selectionRoots() : [node.id]; e.dataTransfer!.setData(DRAG_TYPE, node.id); e.dataTransfer!.setData('text/plain', node.name); e.dataTransfer!.effectAllowed = 'copyMove'; }}
         onDragOver={folder ? (e) => { e.preventDefault(); e.stopPropagation(); setDrop(true); } : undefined}
         onDragLeave={folder ? () => setDrop(false) : undefined}
         onDrop={folder ? (e) => { e.preventDefault(); e.stopPropagation(); setDrop(false); dropInto(e, node.id); } : undefined}
@@ -69,19 +84,45 @@ function Row({ node, depth }: { node: TreeNode; depth: number }) {
 function dropInto(e: DragEvent, parentId: string | null) {
   if (!canWrite.value) return;
   const id = e.dataTransfer?.getData(DRAG_TYPE);
-  if (id) { moveNode(id, parentId); return; }
+  if (id) { moveNodes(dragIds.includes(id) ? dragIds : [id], parentId); return; }
   const list = [...(e.dataTransfer?.files ?? [])];
   if (list.length) uploadFiles(list.map((file) => ({ file })), parentId);
 }
 
+// клавиатура в дереве — как в проводнике VS Code
+function onTreeKey(e: KeyboardEvent) {
+  if (e.target !== e.currentTarget) return;
+  const rows = visibleRows();
+  const cur = byId.value.get(treeCursor.value ?? '');
+  const i = cur ? rows.findIndex((n) => n.id === cur.id) : -1;
+  const go = (n?: TreeNode) => { if (n) selectNode(n.id, e.shiftKey ? 'range' : 'one'); };
+  const mod = e.ctrlKey || e.metaKey;
+  if (e.key === 'ArrowDown') go(rows[Math.min(rows.length - 1, i + 1)]);
+  else if (e.key === 'ArrowUp') go(rows[Math.max(0, i - 1)]);
+  else if (e.key === 'Home') go(rows[0]);
+  else if (e.key === 'End') go(rows[rows.length - 1]);
+  else if (e.key === 'ArrowRight' && cur?.kind === 'folder') { if (expanded.value.has(cur.id)) go(children.value.get(cur.id)?.[0]); else toggleFolder(cur.id); }
+  else if (e.key === 'ArrowLeft' && cur) { if (cur.kind === 'folder' && expanded.value.has(cur.id)) toggleFolder(cur.id); else if (cur.parentId) selectNode(cur.parentId); }
+  else if ((e.key === 'Enter' || e.key === ' ') && cur) { if (cur.kind === 'folder') toggleFolder(cur.id); else openFile(cur.id); }
+  else if (e.key === 'Delete' && selected.value.size && canWrite.value) deleteNodes([...selected.value]);
+  else if (e.key === 'Escape' && selected.value.size) selectNode(null);
+  else if (mod && e.code === 'KeyA') selected.value = new Set(rows.map((n) => n.id));
+  else return;
+  e.preventDefault();
+}
+
 function FileTree() {
   const [drop, setDrop] = useState(false);
+  const el = useRef<HTMLDivElement>(null);
+  const cursor = treeCursor.value;
+  useEffect(() => { el.current?.querySelector('.is-cursor')?.scrollIntoView({ block: 'nearest' }); }, [cursor]);
   const roots = children.value.get('') ?? [];
   const long = useLongPress((at) => openMenu(at, rootMenu()));
   if (!treeLoaded.value) return <div class="side-empty">Загрузка…</div>;
   return (
     <div
-      class={`tree${drop ? ' is-drop-root' : ''}`} role="tree"
+      ref={el} class={`tree${drop ? ' is-drop-root' : ''}`} role="tree" aria-multiselectable tabIndex={0}
+      onKeyDown={onTreeKey} onClick={(e) => { if (e.target === e.currentTarget) selectNode(null); }}
       onContextMenu={(e) => { e.preventDefault(); openMenu(e, rootMenu()); }}
       onTouchStart={(e) => { if (e.target === e.currentTarget) long.onTouchStart(e); }}
       onTouchMove={long.onTouchMove} onTouchEnd={long.onTouchEnd} onTouchCancel={long.onTouchCancel}

@@ -279,7 +279,8 @@ function build(view: EditorView, live: boolean): DecorationSet {
 
           case 'ListMark': {
             const list = ref.node.parent?.parent?.name;
-            const task = /^ \[([ xX])\] /.exec(state.sliceDoc(ref.to, ref.to + 5));
+            // «- [ ]» в самом конце строки — тоже задача, просто пока без текста
+            const task = /^ \[([ xX])\](?: |$)/.exec(state.sliceDoc(ref.to, Math.min(ref.to + 5, doc.lineAt(ref.to).to)));
             if (task) {
               const tFrom = ref.to + 1, tTo = ref.to + 4;
               const checked = task[1] !== ' ';

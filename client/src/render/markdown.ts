@@ -102,7 +102,7 @@ md.core.ruler.after('inline', 'tasks', (state) => {
     const inline = tokens[i];
     if (inline.type !== 'inline' || tokens[i - 1].type !== 'paragraph_open' || tokens[i - 2].type !== 'list_item_open') continue;
     const first = inline.children?.[0];
-    const m = first?.type === 'text' ? /^\[([ xX])\]\s+/.exec(first.content) : null;
+    const m = first?.type === 'text' ? /^\[([ xX])\](?:\s+|$)/.exec(first.content) : null;
     if (!m || !first) continue;
     first.content = first.content.slice(m[0].length);
     const box = new state.Token('html_inline', '', 0);
